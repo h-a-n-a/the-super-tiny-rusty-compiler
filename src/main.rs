@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 #[derive(Debug, PartialEq)]
 enum Token {
     ParenOpen,
@@ -150,28 +153,22 @@ fn parser(tokens: &Vec<Token>) -> LispNode {
 }
 
 trait Visitor {
-    fn enter_program(&self, program: &LispProgramNode);
-    fn exit_program(&self, program: &LispProgramNode);
+    fn enter_program(&mut self, program: &LispProgramNode);
+    fn exit_program(&mut self, program: &LispProgramNode);
 
-    fn enter_number_literal(&self, node: &LispNumberLiteralNode, parent: &LispNode);
-    fn exit_number_literal(&self, node: &LispNumberLiteralNode, parent: &LispNode);
+    fn enter_number_literal(&mut self, node: &LispNumberLiteralNode, parent: &LispNode);
+    fn exit_number_literal(&mut self, node: &LispNumberLiteralNode, parent: &LispNode);
 
-    fn enter_call_expression(&self, node: &LispCallExpressionNode, parent: &LispNode);
-    fn exit_call_expression(&self, node: &LispCallExpressionNode, parent: &LispNode);
+    fn enter_call_expression(&mut self, node: &LispCallExpressionNode, parent: &LispNode);
+    fn exit_call_expression(&mut self, node: &LispCallExpressionNode, parent: &LispNode);
 }
 
-fn traverser<T>(ast: &LispNode, visitor: &T)
-where
-    T: Visitor,
-{
-    fn traverse_node<T>(node: &LispNode, parent: &LispNode, visitor: &T)
-    where
-        T: Visitor,
-    {
+fn traverser<T: Visitor>(ast: &LispNode, visitor: &mut T) {
+    fn traverse_node<T: Visitor>(node: &LispNode, parent: &LispNode, visitor: &mut T) {
         match node {
             LispNode::CallExpression(current) => {
                 visitor.enter_call_expression(current, parent);
-                traverse_nodes(&current.params, parent, visitor);
+                traverse_nodes(&current.params, node, visitor);
                 visitor.exit_call_expression(current, parent);
             }
             LispNode::NumberLiteral(current) => {
@@ -182,7 +179,7 @@ where
         }
     }
 
-    fn traverse_nodes<T>(nodes: &Vec<LispNode>, parent: &LispNode, visitor: &T)
+    fn traverse_nodes<T>(nodes: &Vec<LispNode>, parent: &LispNode, visitor: &mut T)
     where
         T: Visitor,
     {
@@ -200,12 +197,123 @@ where
     }
 }
 
-fn transformer(ast: &LispNode) {}
+#[derive(Debug, Clone)]
+enum Callee {
+    Identifier(String),
+}
+
+#[derive(Debug, Clone)]
+struct CCallExpressionNode {
+    callee: Callee,
+    arguments: Vec<Rc<RefCell<CNode>>>,
+}
+
+#[derive(Debug, Clone)]
+struct CExpressionStatementNode {
+    expression: Rc<RefCell<CNode>>,
+}
+
+#[derive(Debug, Clone)]
+struct CNumberLiteralNode {
+    value: String,
+}
+
+#[derive(Debug, Clone)]
+struct CProgramNode {
+    body: Vec<Rc<RefCell<CNode>>>,
+}
+
+#[derive(Debug, Clone)]
+enum CNode {
+    Program(CProgramNode),
+    ExpressionStatement(CExpressionStatementNode),
+    CallExpression(CCallExpressionNode),
+    NumberLiteral(CNumberLiteralNode),
+}
+
+impl CNode {
+    fn new_program(body: Vec<Rc<RefCell<CNode>>>) -> CNode {
+        CNode::Program(CProgramNode { body })
+    }
+    fn new_expression_statement(expression: Rc<RefCell<CNode>>) -> CNode {
+        CNode::ExpressionStatement(CExpressionStatementNode { expression })
+    }
+    fn new_call_expression(callee: Callee, arguments: Vec<Rc<RefCell<CNode>>>) -> CNode {
+        CNode::CallExpression(CCallExpressionNode { callee, arguments })
+    }
+    fn new_number_literal(value: String) -> CNode {
+        CNode::NumberLiteral(CNumberLiteralNode { value })
+    }
+}
+
+fn transformer(ast: &LispNode) -> RefCell<CNode> {
+    struct LispVisitor {
+        stack: Vec<Rc<RefCell<CNode>>>,
+    };
+
+    impl Visitor for LispVisitor {
+        fn enter_program(&mut self, program: &LispProgramNode) {
+            let new_program = CNode::new_program(vec![]);
+            self.stack.push(Rc::new(RefCell::new(new_program)));
+        }
+        fn exit_program(&mut self, program: &LispProgramNode) {}
+        fn enter_number_literal(&mut self, node: &LispNumberLiteralNode, parent: &LispNode) {
+            let new_node = CNode::new_number_literal(node.value.clone());
+
+            let last_of_stack = self.stack.last();
+
+            if let Some(rc_node) = last_of_stack {
+                // do not use *rc_node, which helps to avoid moving
+                let mut ref_node = rc_node.borrow_mut();
+                if let CNode::CallExpression(ref mut call_expr) = *ref_node {
+                    call_expr.arguments.push(Rc::new(RefCell::new(new_node)));
+                }
+            }
+        }
+        fn exit_number_literal(&mut self, node: &LispNumberLiteralNode, parent: &LispNode) {}
+        fn enter_call_expression(&mut self, node: &LispCallExpressionNode, parent: &LispNode) {
+            let callee = Callee::Identifier(node.name.clone());
+            let call_expr = Rc::new(RefCell::new(CNode::new_call_expression(callee, vec![])));
+
+            let last_of_stack = self.stack.last();
+
+            if let Some(rc_node) = last_of_stack {
+                let mut ref_node = rc_node.borrow_mut();
+                if let CNode::Program(ref mut new_program) = *ref_node {
+                    let expr_stmt =
+                        RefCell::new(CNode::new_expression_statement(Rc::clone(&call_expr)));
+                    new_program.body.push(Rc::new(expr_stmt));
+                } else if let CNode::CallExpression(ref mut new_call_expr) = *ref_node {
+                    new_call_expr.arguments.push(Rc::clone(&call_expr));
+                }
+            } else {
+                panic!("panicked!");
+            }
+
+            self.stack.push(Rc::clone(&call_expr));
+        }
+        fn exit_call_expression(&mut self, node: &LispCallExpressionNode, parent: &LispNode) {
+            self.stack.pop();
+        }
+    }
+
+    let mut v = LispVisitor { stack: vec![] };
+    traverser(ast, &mut v);
+
+    let new_ast_ref = v.stack.get(0);
+    if let Some(new_ast) = new_ast_ref {
+        // &Rc<RefCell> -> Rc<RefCell> -> RefCell
+        (**new_ast).clone()
+    } else {
+        panic!("panicked!")
+    }
+}
 
 fn main() {
     let lisp_input = "(add 2 (subtract 4 2))";
 
     let tokens = tokenizer(lisp_input);
     let ast = parser(&tokens);
-    println!("{:#?}", ast)
+    let new_ast = transformer(&ast);
+    println!("{:#?}", new_ast)
 }
