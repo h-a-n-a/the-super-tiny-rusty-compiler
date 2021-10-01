@@ -62,37 +62,37 @@ fn tokenizer(input: &str) -> Vec<Token> {
 }
 
 #[derive(Debug)]
-struct CallExpressionNode {
+struct LispCallExpressionNode {
     name: String,
-    params: Vec<Node>,
+    params: Vec<LispNode>,
 }
 
 #[derive(Debug)]
-struct ProgramNode {
-    body: Vec<Node>,
+struct LispProgramNode {
+    body: Vec<LispNode>,
 }
 
 #[derive(Debug)]
-struct NumberLiteralNode {
+struct LispNumberLiteralNode {
     value: String,
 }
 
 #[derive(Debug)]
-enum Node {
-    Program(ProgramNode),
-    CallExpression(CallExpressionNode),
-    NumberLiteral(NumberLiteralNode),
+enum LispNode {
+    Program(LispProgramNode),
+    CallExpression(LispCallExpressionNode),
+    NumberLiteral(LispNumberLiteralNode),
 }
 
-impl Node {
-    fn new_program(body: Vec<Node>) -> Node {
-        Node::Program(ProgramNode { body })
+impl LispNode {
+    fn new_program(body: Vec<LispNode>) -> LispNode {
+        LispNode::Program(LispProgramNode { body })
     }
-    fn new_call_expression(name: String, params: Vec<Node>) -> Node {
-        Node::CallExpression(CallExpressionNode { name, params })
+    fn new_call_expression(name: String, params: Vec<LispNode>) -> LispNode {
+        LispNode::CallExpression(LispCallExpressionNode { name, params })
     }
-    fn new_number_literal(value: String) -> Node {
-        Node::NumberLiteral(NumberLiteralNode { value })
+    fn new_number_literal(value: String) -> LispNode {
+        LispNode::NumberLiteral(LispNumberLiteralNode { value })
     }
 }
 
@@ -102,10 +102,10 @@ impl Node {
  *
  *   [{ type: 'paren', value: '(' }, ...]   =>   { type: 'Program', body: [...] }
  */
-fn parser(tokens: &Vec<Token>) -> Node {
+fn parser(tokens: &Vec<Token>) -> LispNode {
     let mut current: usize = 0;
 
-    fn walk(current: &mut usize, tokens: &Vec<Token>) -> Node {
+    fn walk(current: &mut usize, tokens: &Vec<Token>) -> LispNode {
         let token = &tokens[*current];
 
         return match token {
@@ -114,7 +114,7 @@ fn parser(tokens: &Vec<Token>) -> Node {
                 let token = &tokens[*current];
 
                 if let Token::Name(name) = token {
-                    let mut params: Vec<Node> = vec![];
+                    let mut params: Vec<LispNode> = vec![];
 
                     *current += 1;
                     let mut token = &tokens[*current];
@@ -127,83 +127,80 @@ fn parser(tokens: &Vec<Token>) -> Node {
                     // encounter `Token::ParenClose`, skip it.
                     *current += 1;
 
-                    return Node::new_call_expression(name.to_owned(), params);
+                    return LispNode::new_call_expression(name.to_owned(), params);
                 }
 
                 panic!("[parser] unexpected token: {:?}", token)
             }
             Token::Number(number) => {
                 *current += 1;
-                Node::new_number_literal(number.to_owned())
+                LispNode::new_number_literal(number.to_owned())
             }
             _ => panic!("[parser]: unexpected token: {:?}", token),
         };
     }
 
-    let mut program_body: Vec<Node> = vec![];
+    let mut program_body: Vec<LispNode> = vec![];
 
     while current < tokens.len() {
         program_body.push(walk(&mut current, &tokens));
     }
 
-    Node::new_program(program_body)
+    LispNode::new_program(program_body)
 }
 
-// trait Visitor {
-//     fn enter_program(&self, program: &Program);
-//     fn exit_program(&self, program: &Program);
-//
-//     fn enter_number_literal(&self, node: &Node, parent: Option<&Node>);
-//     fn exit_number_literal(&self, node: &Node, parent: Option<&Node>);
-//
-//     fn enter_call_expression(&self, node: &Node, parent: Option<&Node>);
-//     fn exit_call_expression(&self, node: &Node, parent: Option<&Node>);
-// }
-//
-// fn traverser<T>(ast: &Program, visitor: &T)
-// where
-//     T: Visitor,
-// {
-//     fn traverseNode<T>(node: &Node, parent: &Node, visitor: &T)
-//     where
-//         T: Visitor,
-//     {
-//         match node.kind {
-//             NodeKind::Program => {}
-//             NodeKind::NumberLiteral => {
-//                 visitor.enter_number_literal(node, Some(parent));
-//                 visitor.exit_number_literal(node, Some(parent));
-//             }
-//             NodeKind::CallExpression => {
-//                 visitor.enter_call_expression(node, Some(parent));
-//
-//                 // traverseNodeArray();
-//
-//                 visitor.exit_call_expression(node, Some(parent));
-//             }
-//         }
-//     }
-//
-//     fn traverseNodeArray<T>(nodes: &Vec<Node>, parent: Some(&Node), visitor: &T)
-//     where
-//         T: Visitor,
-//     {
-//         for node in nodes {
-//             traverseNode(node, parent, visitor)
-//         }
-//     }
-//
-//     fn traverseProgram<T>(program: &Program, visitor: &T)
-//     where
-//         T: Visitor,
-//     {
-//         visitor.enter_program(program);
-//         traverseNodeArray(*program.body, None, visitor);
-//         visitor.exit_program(program);
-//     }
-//
-//     traverseProgram(ast, visitor);
-// }
+trait Visitor {
+    fn enter_program(&self, program: &LispProgramNode);
+    fn exit_program(&self, program: &LispProgramNode);
+
+    fn enter_number_literal(&self, node: &LispNumberLiteralNode, parent: &LispNode);
+    fn exit_number_literal(&self, node: &LispNumberLiteralNode, parent: &LispNode);
+
+    fn enter_call_expression(&self, node: &LispCallExpressionNode, parent: &LispNode);
+    fn exit_call_expression(&self, node: &LispCallExpressionNode, parent: &LispNode);
+}
+
+fn traverser<T>(ast: &LispNode, visitor: &T)
+where
+    T: Visitor,
+{
+    fn traverse_node<T>(node: &LispNode, parent: &LispNode, visitor: &T)
+    where
+        T: Visitor,
+    {
+        match node {
+            LispNode::CallExpression(current) => {
+                visitor.enter_call_expression(current, parent);
+                traverse_nodes(&current.params, parent, visitor);
+                visitor.exit_call_expression(current, parent);
+            }
+            LispNode::NumberLiteral(current) => {
+                visitor.enter_number_literal(current, parent);
+                visitor.exit_number_literal(current, parent);
+            }
+            _ => panic!("[traverser]: unexpected node type: {:?}", node),
+        }
+    }
+
+    fn traverse_nodes<T>(nodes: &Vec<LispNode>, parent: &LispNode, visitor: &T)
+    where
+        T: Visitor,
+    {
+        for node in nodes {
+            traverse_node(node, parent, visitor)
+        }
+    }
+
+    if let LispNode::Program(node) = ast {
+        visitor.enter_program(node);
+        traverse_nodes(&node.body, ast, visitor);
+        visitor.exit_program(node);
+    } else {
+        panic!("[traverser]: unexpected `program` type: {:?}", ast);
+    }
+}
+
+fn transformer(ast: &LispNode) {}
 
 fn main() {
     let lisp_input = "(add 2 (subtract 4 2))";
