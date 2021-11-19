@@ -246,53 +246,59 @@ impl CNode {
     }
 }
 
-fn transformer(ast: &LispNode) -> RefCell<CNode> {
+fn transformer(ast: &LispNode) -> Rc<RefCell<CNode>> {
     struct LispVisitor {
         stack: Vec<Rc<RefCell<CNode>>>,
-    };
+    }
 
     impl Visitor for LispVisitor {
-        fn enter_program(&mut self, program: &LispProgramNode) {
+        fn enter_program(&mut self, _program: &LispProgramNode) {
             let new_program = CNode::new_program(vec![]);
             self.stack.push(Rc::new(RefCell::new(new_program)));
         }
-        fn exit_program(&mut self, program: &LispProgramNode) {}
+        fn exit_program(&mut self, _program: &LispProgramNode) {}
         fn enter_number_literal(&mut self, node: &LispNumberLiteralNode, parent: &LispNode) {
             let new_node = CNode::new_number_literal(node.value.clone());
 
             let last_of_stack = self.stack.last();
 
             if let Some(rc_node) = last_of_stack {
-                // do not use *rc_node, which helps to avoid moving
-                let mut ref_node = rc_node.borrow_mut();
-                if let CNode::CallExpression(ref mut call_expr) = *ref_node {
-                    call_expr.arguments.push(Rc::new(RefCell::new(new_node)));
+                match *rc_node.borrow_mut() {
+                    CNode::CallExpression(ref mut call_expr) => {
+                        call_expr.arguments.push(Rc::new(RefCell::new(new_node)));
+                    }
+                    ref node => panic!("[transformer] unexpected node type {:#?}", node),
                 }
+            } else {
+                panic!("[transformer] unexpected error, last of stack does not exist!")
             }
         }
-        fn exit_number_literal(&mut self, node: &LispNumberLiteralNode, parent: &LispNode) {}
-        fn enter_call_expression(&mut self, node: &LispCallExpressionNode, parent: &LispNode) {
+        fn exit_number_literal(&mut self, _node: &LispNumberLiteralNode, _parent: &LispNode) {}
+        fn enter_call_expression(&mut self, node: &LispCallExpressionNode, _parent: &LispNode) {
             let callee = Callee::Identifier(node.name.clone());
             let call_expr = Rc::new(RefCell::new(CNode::new_call_expression(callee, vec![])));
 
             let last_of_stack = self.stack.last();
 
             if let Some(rc_node) = last_of_stack {
-                let mut ref_node = rc_node.borrow_mut();
-                if let CNode::Program(ref mut new_program) = *ref_node {
-                    let expr_stmt =
-                        RefCell::new(CNode::new_expression_statement(Rc::clone(&call_expr)));
-                    new_program.body.push(Rc::new(expr_stmt));
-                } else if let CNode::CallExpression(ref mut new_call_expr) = *ref_node {
-                    new_call_expr.arguments.push(Rc::clone(&call_expr));
+                match *rc_node.borrow_mut() {
+                    CNode::Program(ref mut new_program) => {
+                        let expr_stmt =
+                            RefCell::new(CNode::new_expression_statement(Rc::clone(&call_expr)));
+                        new_program.body.push(Rc::new(expr_stmt));
+                    }
+                    CNode::CallExpression(ref mut new_call_expr) => {
+                        new_call_expr.arguments.push(Rc::clone(&call_expr));
+                    }
+                    ref node => panic!("[transformer] unexpected node type {:#?}", node),
                 }
             } else {
-                panic!("panicked!");
+                panic!("[transformer] unexpected error, last of stack does not exist!");
             }
 
             self.stack.push(Rc::clone(&call_expr));
         }
-        fn exit_call_expression(&mut self, node: &LispCallExpressionNode, parent: &LispNode) {
+        fn exit_call_expression(&mut self, _node: &LispCallExpressionNode, _parent: &LispNode) {
             self.stack.pop();
         }
     }
@@ -303,9 +309,42 @@ fn transformer(ast: &LispNode) -> RefCell<CNode> {
     let new_ast_ref = v.stack.get(0);
     if let Some(new_ast) = new_ast_ref {
         // &Rc<RefCell> -> Rc<RefCell> -> RefCell
-        (**new_ast).clone()
+        (*new_ast).clone()
     } else {
         panic!("panicked!")
+    }
+}
+
+fn codegen(new_ast: &Rc<RefCell<CNode>>) -> String {
+    let mut code = String::from("");
+
+    match *new_ast.borrow_mut() {
+        CNode::Program(ref node_ref) => {
+            for node in &node_ref.body {
+                code = format!("{}{}", code, codegen(node));
+            }
+            code
+        }
+        CNode::ExpressionStatement(ref node_ref) => codegen(&node_ref.expression),
+        CNode::CallExpression(ref call_expr) => {
+            if let Callee::Identifier(ref identifier) = call_expr.callee {
+                code = format!("{}{}(", code, identifier.to_owned());
+
+                let arguments = call_expr.arguments.clone();
+
+                for (index, arg) in arguments.iter().enumerate() {
+                    code = format!("{}{}", code, codegen(arg));
+                    if index != (arguments.len() - 1) {
+                        code = format!("{}, ", code)
+                    }
+                }
+
+                code = format!("{})", code);
+            }
+
+            code
+        }
+        CNode::NumberLiteral(ref num) => format!("{}{}", code, num.value.to_owned()),
     }
 }
 
@@ -315,5 +354,8 @@ fn main() {
     let tokens = tokenizer(lisp_input);
     let ast = parser(&tokens);
     let new_ast = transformer(&ast);
-    println!("{:#?}", new_ast)
+    let code = codegen(&new_ast);
+
+    println!("original code: {:#?}", lisp_input);
+    println!("c code: {:#?}", code);
 }
