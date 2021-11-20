@@ -1,7 +1,11 @@
 [package]
 name = "the-super-tiny-rusty-compiler"
 version = "0.1.0"
+authors = ["h-a-n-a <andywangsy@gmail.com>"]
+description = "A super tiny and rusty compiler"
+license = "MIT"
 edition = "2018"
+repository = "https://github.com/h-a-n-a/the-super-tiny-rusty-compiler"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
