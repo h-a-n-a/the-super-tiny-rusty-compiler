@@ -23,12 +23,12 @@ pub fn codegen(new_ast: &Rc<RefCell<c_ast::Node>>) -> String {
                 "{})",
                 call_expr.arguments.iter().enumerate().fold(
                     format!("{}{}(", code, identifier),
-                    |code, (index, arg)| {
-                        let mut new_code = format!("{}{}", code, codegen(arg));
+                    |mut code, (index, arg)| {
+                        code = format!("{}{}", code, codegen(arg));
                         if index != (&call_expr.arguments.len() - 1) {
-                            new_code = format!("{}, ", new_code)
+                            code = format!("{}, ", code)
                         }
-                        new_code
+                        code
                     }
                 )
             );
